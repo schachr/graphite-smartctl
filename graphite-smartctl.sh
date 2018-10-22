@@ -27,11 +27,22 @@ elif [[ -z $smartctlcmd ]] ; then
     exit 1
 fi
 
-# sanity check smartctl output and get first usable header
+# do not power on sleeping disks
+smartctlcmd="${smartctlcmd} --nocheck standby"
+
+# sanity check smartctl output and get header
 for device in $_device ; do
     header=$($smartctlcmd -a /dev/$device | awk "/^ID#/ {printline = 1; print; next} /^$/ {printline = 0} printline" | head -n1)
     [[ ! -z $header ]] && break
 done
+# try to detect usb bridges
+if [[ -z $header ]] ; then
+    smartctlcmd="${smartctlcmd} -d sat"
+    for device in $_device ; do
+        header=$($smartctlcmd -a /dev/$device | awk "/^ID#/ {printline = 1; print; next} /^$/ {printline = 0} printline" | head -n1)
+        [[ ! -z $header ]] && break
+    done
+fi
 
 # sanity check header
 if [[ -z $header ]] ; then
@@ -41,6 +52,9 @@ fi
 
 # process output of smartctl
 for device in $_device ; do
+    _serial=$($smartctlcmd -i $device | egrep -i "^Serial Number" | sed 's/^Serial Number: *//I')
+    _graphiteserial=${_serial:-${device}}
+
     while IFS= read -r line ; do
         prefix=$(echo $line | awk '{print $1"."$2}')
 
@@ -51,7 +65,7 @@ for device in $_device ; do
             value=$(echo $line | cut -f$i -d" ")
 
             if [[ $value =~ ^-?[0-9]+([.][0-9]+)?$ ]] ; then
-                _output+=("$_graphiteprefix.$_hostname.disk.$device.smart.$prefix.$(echo $header | cut -f$i -d" ") $value "$_date)
+                _output+=("$_graphiteprefix.$_hostname.disk.$_graphiteserial.smart.$prefix.$(echo $header | cut -f$i -d" ") $value "$_date)
                 [ -t 1 ] && echo ${_output[-1]}
             fi
 
